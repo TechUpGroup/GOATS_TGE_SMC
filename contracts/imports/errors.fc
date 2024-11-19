@@ -1,0 +1,9 @@
+int error::MAX_PERIOD() asm "101 PUSHINT";
+int error::NOT_OWNER() asm "102 PUSHINT";
+int error::INVALID_VALUE() asm "103 PUSHINT";
+int error::INITIALIZED() asm "104 PUSHINT";
+int error::INVALID_CALLER() asm "105 PUSHINT";
+int error::INVALID_MIN_TON() asm "106 PUSHINT";
+int error::NOT_OPERATOR() asm "107 PUSHINT";
+int error::TOO_EARLY() asm "108 PUSHINT";
+int error::NOT_INITIALIZED() asm "109 PUSHINT";

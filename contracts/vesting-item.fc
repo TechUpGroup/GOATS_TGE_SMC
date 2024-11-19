@@ -1,0 +1,130 @@
+#include "imports/stdlib.fc";
+#include "imports/constants.fc";
+#include "imports/errors.fc";
+#include "imports/events.fc";
+#include "imports/messages.fc";
+#include "imports/op-codes.fc";
+#include "imports/vesting-utils.fc";
+
+
+;; storage variables
+
+global int storage::total_vesting;
+global int storage::claimed_amount;
+global slice storage::vesting_address;
+global slice storage::owner_address;
+global slice storage::reward_token_address;
+global cell storage::jetton_wallet_code;
+
+;; load_data populates storage variables using stored data
+() load_data() impure {
+    var ds = get_data().begin_parse();
+
+    storage::total_vesting = ds~load_coins();
+    storage::claimed_amount = ds~load_coins();
+    storage::vesting_address = ds~load_msg_addr();
+    storage::owner_address = ds~load_msg_addr();
+    storage::reward_token_address = ds~load_msg_addr();
+    storage::jetton_wallet_code = ds~load_ref();
+    
+    ds.end_parse();
+}
+
+;; save_data stores storage variables as a cell into persistent storage
+() save_data() impure {
+    set_data(
+        begin_cell()
+            .store_coins(storage::total_vesting)
+            .store_coins(storage::claimed_amount)
+            .store_slice(storage::vesting_address)
+            .store_slice(storage::owner_address)
+            .store_slice(storage::reward_token_address)
+            .store_ref(storage::jetton_wallet_code)
+            .end_cell()
+    );
+}
+
+;; recv_internal is the main function of the contract and is called when it receives a message from other contracts
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) { ;; ignore all empty messages
+        return ();
+    }
+
+    slice cs = in_msg_full.begin_parse();
+    int flags = cs~load_uint(4);
+    if (flags & 1) { ;; ignore all bounced messages
+        return ();
+    }
+
+    load_data(); ;; here we populate the storage variables
+
+    slice sender_address = cs~load_msg_addr();
+    cs~load_msg_addr(); ;; skip dst
+    cs~load_coins(); ;; skip value
+    cs~skip_bits(1); ;; skip extracurrency collection
+    cs~load_coins(); ;; skip ihr_fee
+    int fwd_fee = cs~load_coins(); ;; we use message fwd_f
+
+    int op = in_msg_body~load_uint(32); ;; by convention, the first 32 bits of incoming message is the op
+    int query_id = in_msg_body~load_uint(64); ;; also by convention, the next 64 bits contain the "query id", although this is not always the case
+
+    if (op == op::initialize()) {
+        throw_unless(error::INVALID_CALLER(), equal_slices_bits(sender_address, storage::vesting_address));
+        throw_unless(error::INITIALIZED(), (storage::total_vesting == 0));
+        (
+            int total_vesting,
+            cell internal_body
+        ) = (
+            in_msg_body~load_coins(),
+            in_msg_body~load_ref()
+        );
+        storage::total_vesting = total_vesting;
+        save_data();
+        send_simple_message(const::provide_address_gas_consumption(), storage::vesting_address, internal_body, NORMAL);
+        return();
+    }
+
+    if (op == op::claim()) {
+        throw_unless(error::INVALID_CALLER(), equal_slices_bits(sender_address, storage::vesting_address));
+        throw_unless(error::NOT_INITIALIZED(), (storage::total_vesting > 0));
+        int current_period = in_msg_body~load_uint(8);
+        int amount = 0;
+        if (current_period == 12) {
+            amount = storage::total_vesting;
+        } else {
+            amount  = storage::total_vesting * current_period / 12;
+        }
+        int claimable = amount - storage::claimed_amount;
+        storage::claimed_amount = amount;
+        save_data();
+        cell body = begin_cell()
+                    .store_uint(op::internal_claim(), 32)
+                    .store_uint(query_id, 64)
+                    .store_coins(claimable)
+                    .store_slice(storage::owner_address)
+                    .store_slice(storage::reward_token_address)
+                    .store_ref(storage::jetton_wallet_code)
+                    .end_cell();
+        send_simple_message(5 * const::provide_address_gas_consumption(), storage::vesting_address, body, NORMAL);
+        return();
+    }
+
+
+    throw(0xffff); ;; if the message contains an op that is not known to this contract, we throw
+}
+
+;; get methods are a means to conveniently read contract data using, for example, HTTP APIs
+;; they are marked with method_id
+;; note that unlike in many other smart contract VMs, get methods cannot be called by other contracts
+
+(int, int, slice, slice, slice, cell) get_item_data() method_id {
+    load_data();
+    return (
+        storage::total_vesting,
+        storage::claimed_amount,
+        storage::vesting_address,
+        storage::owner_address,
+        storage::reward_token_address,
+        storage::jetton_wallet_code
+    );
+}
