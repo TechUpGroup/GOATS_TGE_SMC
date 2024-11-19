@@ -67,7 +67,6 @@ export class Vesting implements Contract {
         opts: {
             value: bigint;
             queryID?: number;
-            ownerItem: Address;
             tokenAddress: Address;
             jettonWalletCode: Cell;
         }
@@ -78,7 +77,6 @@ export class Vesting implements Contract {
             body: beginCell()
                 .storeUint(Opcodes.claim, 32)
                 .storeUint(opts.queryID ?? 0, 64)
-                .storeAddress(opts.ownerItem)
                 .storeAddress(opts.tokenAddress)
                 .storeRef(opts.jettonWalletCode)
                 .endCell(),

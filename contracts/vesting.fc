@@ -170,17 +170,15 @@ global cell storage::vesting_item_code;
         throw_unless(error::INVALID_VALUE(), (msg_value >= 7 * const::provide_address_gas_consumption()));
         throw_unless(error::TOO_EARLY(), (storage::current_period > 0));
         (
-            slice owner_item,
             slice reward_token_address,
             cell jetton_wallet_code
         ) = (
-            in_msg_body~load_msg_addr(),
             in_msg_body~load_msg_addr(),
             in_msg_body~load_ref()
         );
         cell item_state_init = calculate_item_state_init(
             my_address(),
-            owner_item,
+            sender_address,
             reward_token_address,
             jetton_wallet_code,
             storage::vesting_item_code

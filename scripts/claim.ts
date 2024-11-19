@@ -22,7 +22,6 @@ export async function run(provider: NetworkProvider) {
 
     await vesting.sendClaim(provider.sender(), {
         value: toNano('0.08'),
-        ownerItem: owner,
         tokenAddress: rewardTokenAddress,
         jettonWalletCode
     });
