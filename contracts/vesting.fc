@@ -5,10 +5,13 @@
 #include "imports/messages.fc";
 #include "imports/op-codes.fc";
 #include "imports/vesting-utils.fc";
+#include "imports/params.fc";
 
 ;; storage variables
 
 global int storage::current_period;
+global int storage::latest_time;
+global int storage::balance;
 global slice storage::operator_address;
 global slice storage::owner_address;
 global cell storage::vesting_item_code;
@@ -18,6 +21,8 @@ global cell storage::vesting_item_code;
     var ds = get_data().begin_parse();
 
     storage::current_period = ds~load_uint(8);
+    storage::latest_time = ds~load_uint(32);
+    storage::balance = ds~load_coins();
     storage::operator_address = ds~load_msg_addr();
     storage::owner_address = ds~load_msg_addr();
     storage::vesting_item_code = ds~load_ref();
@@ -30,6 +35,8 @@ global cell storage::vesting_item_code;
     set_data(
         begin_cell()
             .store_uint(storage::current_period, 8)
+            .store_uint(storage::latest_time, 32)
+            .store_coins(storage::balance)
             .store_slice(storage::operator_address)
             .store_slice(storage::owner_address)
             .store_ref(storage::vesting_item_code)
@@ -92,10 +99,18 @@ global cell storage::vesting_item_code;
     int op = in_msg_body~load_uint(32); ;; by convention, the first 32 bits of incoming message is the op
     int query_id = in_msg_body~load_uint(64); ;; also by convention, the next 64 bits contain the "query id", although this is not always the case
 
+    if (op == op::transfer_notification()) {
+        int jetton_amount = in_msg_body~load_coins();
+        throw_unless(error::INVALID_AMOUNT(), jetton_amount > 0);
+        storage::balance += jetton_amount;
+        save_data();
+        return();
+    }
+
     if (op == op::create_vesting()) {
         throw_unless(error::NOT_OWNER(), equal_slices_bits(sender_address, storage::owner_address));
         throw_unless(error::INVALID_MIN_TON(), (my_balance >= const::min_tons_for_storage()));  
-        throw_unless(error::INVALID_VALUE(), (msg_value >= 7 * const::provide_address_gas_consumption()));
+        throw_unless(error::INVALID_VALUE(), (msg_value >= 8 * const::provide_address_gas_consumption()));
         (
             int total_vesting,
             slice owner_item,
@@ -128,7 +143,7 @@ global cell storage::vesting_item_code;
                 .store_uint(query_id, 64)
                 .store_coins(total_vesting)
                 .store_ref(internal_body);
-        send_message_with_stateinit(6 * const::provide_address_gas_consumption(), item_address, item_state_init, body.end_cell(), NORMAL);
+        send_message_with_stateinit(7 * const::provide_address_gas_consumption(), item_address, item_state_init, body.end_cell(), NORMAL);
         return();
     }
 
@@ -167,7 +182,7 @@ global cell storage::vesting_item_code;
 
     if (op == op::claim()) {
         throw_unless(error::INVALID_MIN_TON(), (my_balance >= const::min_tons_for_storage()));  
-        throw_unless(error::INVALID_VALUE(), (msg_value >= 7 * const::provide_address_gas_consumption()));
+        throw_unless(error::INVALID_VALUE(), (msg_value >= 8 * const::provide_address_gas_consumption()));
         throw_unless(error::TOO_EARLY(), (storage::current_period > 0));
         (
             slice reward_token_address,
@@ -188,7 +203,7 @@ global cell storage::vesting_item_code;
                 .store_uint(op::claim(), 32)
                 .store_uint(query_id, 64)
                 .store_uint(storage::current_period, 8);
-        send_simple_message(6 * const::provide_address_gas_consumption(), item_address, body.end_cell(), NORMAL);
+        send_simple_message(7 * const::provide_address_gas_consumption(), item_address, body.end_cell(), NORMAL);
         return();
     }
 
@@ -204,6 +219,7 @@ global cell storage::vesting_item_code;
             in_msg_body~load_msg_addr(),
             in_msg_body~load_ref()
         );
+        throw_unless(error::EXCEED_BALANCE(), (claimable <= storage::balance));
         cell item_state_init = calculate_item_state_init(
             my_address(),
             owner_item,
@@ -220,7 +236,8 @@ global cell storage::vesting_item_code;
             reward_token_address,
             jetton_wallet_code
         );
-        
+        storage::balance -= claimable;
+        save_data();
         emit_log_simple(
             event::claimed(),
             begin_cell()
@@ -229,6 +246,11 @@ global cell storage::vesting_item_code;
                 .end_cell(),
             1
         );
+        var body = begin_cell()
+                    .store_uint(op::internal_claim(), 32)
+                    .store_uint(query_id, 64)
+                    .store_coins(claimable);
+        send_simple_message(const::provide_address_gas_consumption(), item_address, body.end_cell(), NORMAL);
         return();
     }
 
@@ -237,7 +259,9 @@ global cell storage::vesting_item_code;
         throw_unless(error::NOT_OPERATOR(), equal_slices_bits(sender_address, storage::operator_address));
         throw_unless(error::INVALID_MIN_TON(), (my_balance >= const::min_tons_for_storage()));  
         throw_unless(error::MAX_PERIOD(), (storage::current_period < 12));
+        throw_unless(error::TOO_EARLY(), (now() >= storage::latest_time + const::min_period()));
         storage::current_period += 1;
+        storage::latest_time = now();
         save_data();
         emit_log_simple(
             event::increased_period(),
@@ -252,6 +276,7 @@ global cell storage::vesting_item_code;
     if (op == op::change_owner()) {
         throw_unless(error::NOT_OWNER(), equal_slices_bits(sender_address, storage::owner_address));
         slice new_owner_address = in_msg_body~load_msg_addr();
+        force_chain(new_owner_address);
         storage::owner_address = new_owner_address;
         save_data();
         return ();
@@ -260,6 +285,7 @@ global cell storage::vesting_item_code;
     if (op == op::change_operator()) {
         throw_unless(error::NOT_OWNER(), equal_slices_bits(sender_address, storage::owner_address));
         slice new_operator = in_msg_body~load_msg_addr();
+        force_chain(new_operator);
         storage::operator_address = new_operator;
         save_data();
         return ();
@@ -268,23 +294,11 @@ global cell storage::vesting_item_code;
     if (op == op::owner_withdraw()) {
         throw_unless(error::NOT_OWNER(), equal_slices_bits(sender_address, storage::owner_address));
         int amount_ton = in_msg_body~load_coins();
+        throw_unless(error::INVALID_MIN_TON(), (my_balance >= (amount_ton + const::min_tons_for_storage())));  
         var body = begin_cell()
                     .store_uint(op::excesses(), 32)
                     .store_uint(query_id, 64);
         send_message_nobounce(amount_ton, sender_address, body.end_cell(), NORMAL);
-        return ();
-    }
-
-    if (op == op::owner_withdraw_jetton()) {
-        throw_unless(error::NOT_OWNER(), equal_slices_bits(sender_address, storage::owner_address));
-        (int amount_jetton, slice jetton_address, cell jetton_wallet_code) = (in_msg_body~load_coins(), in_msg_body~load_msg_addr(), in_msg_body~load_ref());
-        transfer_jetton(
-            query_id,
-            amount_jetton,
-            sender_address,
-            jetton_address,
-            jetton_wallet_code
-        );
         return ();
     }
 
@@ -295,10 +309,12 @@ global cell storage::vesting_item_code;
 ;; they are marked with method_id
 ;; note that unlike in many other smart contract VMs, get methods cannot be called by other contracts
 
-(int, slice, slice, cell) get_vesting_data() method_id {
+(int, int, int, slice, slice, cell) get_vesting_data() method_id {
     load_data();
     return (
         storage::current_period,
+        storage::latest_time,
+        storage::balance,
         storage::operator_address,
         storage::owner_address,
         storage::vesting_item_code

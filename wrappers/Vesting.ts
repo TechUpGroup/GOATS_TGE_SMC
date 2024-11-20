@@ -2,6 +2,8 @@ import { Address, beginCell, Cell, Contract, contractAddress, ContractProvider, 
 
 export type VestingConfig = {
     currentPeriod: number;
+    latestTime: bigint;
+    balance: bigint;
     operatorAddress: Address;
     ownerAddress: Address;
     vestingItemCode: Cell;
@@ -10,6 +12,8 @@ export type VestingConfig = {
 export function vestingConfigToCell(config: VestingConfig): Cell {
     return beginCell()
         .storeUint(config.currentPeriod, 8)
+        .storeUint(config.latestTime, 32)
+        .storeCoins(config.balance)
         .storeAddress(config.operatorAddress)
         .storeAddress(config.ownerAddress)
         .storeRef(config.vestingItemCode)
@@ -112,11 +116,15 @@ export class Vesting implements Contract {
     async getVestingData(provider: ContractProvider) {
         const result = await provider.get('get_vesting_data', []);
         const currentPeriod = result.stack.readNumber();
+        const latestTime = result.stack.readBigNumber();
+        const balance = result.stack.readBigNumber();
         const operatorAddress = result.stack.readAddress();
         const ownerAddress = result.stack.readAddress();
         const vestingItemCode = result.stack.readCell();
         return {
             currentPeriod,
+            latestTime,
+            balance,
             operatorAddress,
             ownerAddress,
             vestingItemCode

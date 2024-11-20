@@ -21,6 +21,8 @@ export async function run(provider: NetworkProvider) {
         Vesting.createFromConfig(
             {
                 currentPeriod: 0,
+                latestTime: 0n,
+                balance: 0n,
                 operatorAddress: owner,
                 ownerAddress: owner,
                 vestingItemCode: itemCode
