@@ -15,6 +15,7 @@ global int storage::balance;
 global slice storage::operator_address;
 global slice storage::owner_address;
 global cell storage::vesting_item_code;
+global cell storage::token_info;
 
 ;; load_data populates storage variables using stored data
 () load_data() impure {
@@ -26,6 +27,7 @@ global cell storage::vesting_item_code;
     storage::operator_address = ds~load_msg_addr();
     storage::owner_address = ds~load_msg_addr();
     storage::vesting_item_code = ds~load_ref();
+    storage::token_info = ds~load_ref();
     
     ds.end_parse();
 }
@@ -40,8 +42,14 @@ global cell storage::vesting_item_code;
             .store_slice(storage::operator_address)
             .store_slice(storage::owner_address)
             .store_ref(storage::vesting_item_code)
+            .store_ref(storage::token_info)
             .end_cell()
     );
+}
+
+(slice, cell) decode(cell token_info) inline {
+    var cs = token_info.begin_parse();
+    return (cs~load_msg_addr(), cs~load_ref());
 }
 
 () transfer_jetton(
@@ -246,11 +254,6 @@ global cell storage::vesting_item_code;
                 .end_cell(),
             1
         );
-        var body = begin_cell()
-                    .store_uint(op::internal_claim(), 32)
-                    .store_uint(query_id, 64)
-                    .store_coins(claimable);
-        send_simple_message(const::provide_address_gas_consumption(), item_address, body.end_cell(), NORMAL);
         return();
     }
 
@@ -309,7 +312,7 @@ global cell storage::vesting_item_code;
 ;; they are marked with method_id
 ;; note that unlike in many other smart contract VMs, get methods cannot be called by other contracts
 
-(int, int, int, slice, slice, cell) get_vesting_data() method_id {
+(int, int, int, slice, slice, cell, cell) get_vesting_data() method_id {
     load_data();
     return (
         storage::current_period,
@@ -317,7 +320,8 @@ global cell storage::vesting_item_code;
         storage::balance,
         storage::operator_address,
         storage::owner_address,
-        storage::vesting_item_code
+        storage::vesting_item_code,
+        storage::token_info
     );
 }
 
