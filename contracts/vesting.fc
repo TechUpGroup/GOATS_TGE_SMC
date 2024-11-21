@@ -15,6 +15,7 @@ global int storage::balance;
 global slice storage::operator_address;
 global slice storage::owner_address;
 global cell storage::vesting_item_code;
+global cell storage::token_info;
 
 ;; load_data populates storage variables using stored data
 () load_data() impure {
@@ -26,6 +27,7 @@ global cell storage::vesting_item_code;
     storage::operator_address = ds~load_msg_addr();
     storage::owner_address = ds~load_msg_addr();
     storage::vesting_item_code = ds~load_ref();
+    storage::token_info = ds~load_ref();
     
     ds.end_parse();
 }
@@ -40,8 +42,14 @@ global cell storage::vesting_item_code;
             .store_slice(storage::operator_address)
             .store_slice(storage::owner_address)
             .store_ref(storage::vesting_item_code)
+            .store_ref(storage::token_info)
             .end_cell()
     );
+}
+
+(slice, cell) decode(cell token_info) inline {
+    var cs = token_info.begin_parse();
+    return (cs~load_msg_addr(), cs~load_ref());
 }
 
 () transfer_jetton(
@@ -102,6 +110,13 @@ global cell storage::vesting_item_code;
     if (op == op::transfer_notification()) {
         int jetton_amount = in_msg_body~load_coins();
         throw_unless(error::INVALID_AMOUNT(), jetton_amount > 0);
+        (slice token_address, cell jetton_wallet_code) = decode(storage::token_info);
+        slice wallet_address = calculate_user_jetton_wallet_address(
+            my_address(),
+            token_address,
+            jetton_wallet_code
+        );
+        throw_unless(error::INVALID_CALLER(), equal_slices_bits(sender_address, wallet_address));
         storage::balance += jetton_amount;
         save_data();
         return();
@@ -113,15 +128,15 @@ global cell storage::vesting_item_code;
         throw_unless(error::INVALID_VALUE(), (msg_value >= 8 * const::provide_address_gas_consumption()));
         (
             int total_vesting,
-            slice owner_item,
-            slice reward_token_address,
-            cell jetton_wallet_code
+            slice owner_item
         ) = (
             in_msg_body~load_coins(),
-            in_msg_body~load_msg_addr(),
-            in_msg_body~load_msg_addr(),
-            in_msg_body~load_ref()
+            in_msg_body~load_msg_addr()
         );
+        (
+            slice reward_token_address,
+            cell jetton_wallet_code
+        ) = decode(storage::token_info);
         cell item_state_init = calculate_item_state_init(
             my_address(),
             owner_item,
@@ -135,8 +150,6 @@ global cell storage::vesting_item_code;
                             .store_uint(query_id, 64)
                             .store_coins(total_vesting)
                             .store_slice(owner_item)
-                            .store_slice(reward_token_address)
-                            .store_ref(jetton_wallet_code)
                             .end_cell();
         var body = begin_cell()
                 .store_uint(op::initialize(), 32)
@@ -150,15 +163,15 @@ global cell storage::vesting_item_code;
     if (op == op::internal_create()) {
         (
             int total_vesting,
-            slice owner_item,
-            slice reward_token_address,
-            cell jetton_wallet_code
+            slice owner_item
         ) = (
             in_msg_body~load_coins(),
-            in_msg_body~load_msg_addr(),
-            in_msg_body~load_msg_addr(),
-            in_msg_body~load_ref()
+            in_msg_body~load_msg_addr()
         );
+        (
+            slice reward_token_address,
+            cell jetton_wallet_code
+        ) = decode(storage::token_info);
         cell item_state_init = calculate_item_state_init(
             my_address(),
             owner_item,
@@ -187,10 +200,7 @@ global cell storage::vesting_item_code;
         (
             slice reward_token_address,
             cell jetton_wallet_code
-        ) = (
-            in_msg_body~load_msg_addr(),
-            in_msg_body~load_ref()
-        );
+        ) = decode(storage::token_info);
         cell item_state_init = calculate_item_state_init(
             my_address(),
             sender_address,
@@ -246,11 +256,6 @@ global cell storage::vesting_item_code;
                 .end_cell(),
             1
         );
-        var body = begin_cell()
-                    .store_uint(op::internal_claim(), 32)
-                    .store_uint(query_id, 64)
-                    .store_coins(claimable);
-        send_simple_message(const::provide_address_gas_consumption(), item_address, body.end_cell(), NORMAL);
         return();
     }
 
@@ -309,7 +314,7 @@ global cell storage::vesting_item_code;
 ;; they are marked with method_id
 ;; note that unlike in many other smart contract VMs, get methods cannot be called by other contracts
 
-(int, int, int, slice, slice, cell) get_vesting_data() method_id {
+(int, int, int, slice, slice, cell, cell) get_vesting_data() method_id {
     load_data();
     return (
         storage::current_period,
@@ -317,16 +322,24 @@ global cell storage::vesting_item_code;
         storage::balance,
         storage::operator_address,
         storage::owner_address,
-        storage::vesting_item_code
+        storage::vesting_item_code,
+        storage::token_info
     );
 }
 
+(slice, cell) get_token_data() method_id {
+    load_data();
+    return decode(storage::token_info);
+}
+
 slice get_item_address(
-    slice owner_item,
-    slice reward_token_address,
-    cell jetton_wallet_code
+    slice owner_item
 ) method_id {
     load_data();
+    (
+        slice reward_token_address,
+        cell jetton_wallet_code
+    ) = decode(storage::token_info);
     return calculate_user_item_address(
         my_address(),
         owner_item,

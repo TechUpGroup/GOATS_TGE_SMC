@@ -7,6 +7,7 @@ export type VestingConfig = {
     operatorAddress: Address;
     ownerAddress: Address;
     vestingItemCode: Cell;
+    tokenInfo: Cell;
 };
 
 export function vestingConfigToCell(config: VestingConfig): Cell {
@@ -17,6 +18,7 @@ export function vestingConfigToCell(config: VestingConfig): Cell {
         .storeAddress(config.operatorAddress)
         .storeAddress(config.ownerAddress)
         .storeRef(config.vestingItemCode)
+        .storeRef(config.tokenInfo)
         .endCell();
 }
 
@@ -71,8 +73,6 @@ export class Vesting implements Contract {
         opts: {
             value: bigint;
             queryID?: number;
-            tokenAddress: Address;
-            jettonWalletCode: Cell;
         }
     ) {
         await provider.internal(via, {
@@ -81,8 +81,6 @@ export class Vesting implements Contract {
             body: beginCell()
                 .storeUint(Opcodes.claim, 32)
                 .storeUint(opts.queryID ?? 0, 64)
-                .storeAddress(opts.tokenAddress)
-                .storeRef(opts.jettonWalletCode)
                 .endCell(),
         });
     }
@@ -95,8 +93,6 @@ export class Vesting implements Contract {
             queryID?: number;
             totalVesting: bigint;
             ownerItem: Address;
-            tokenAddress: Address;
-            jettonWalletCode: Cell;
         }
     ) {
         await provider.internal(via, {
@@ -107,8 +103,6 @@ export class Vesting implements Contract {
                 .storeUint(opts.queryID ?? 0, 64)
                 .storeCoins(opts.totalVesting)
                 .storeAddress(opts.ownerItem)
-                .storeAddress(opts.tokenAddress)
-                .storeRef(opts.jettonWalletCode)
                 .endCell(),
         });
     }
@@ -121,21 +115,31 @@ export class Vesting implements Contract {
         const operatorAddress = result.stack.readAddress();
         const ownerAddress = result.stack.readAddress();
         const vestingItemCode = result.stack.readCell();
+        const tokenInfo = result.stack.readCell();
         return {
             currentPeriod,
             latestTime,
             balance,
             operatorAddress,
             ownerAddress,
-            vestingItemCode
+            vestingItemCode,
+            tokenInfo
         };
     }
 
-    async getItemAddress(provider: ContractProvider, userAddress: Address, tokenAddress: Address, jettonWalletCode: Cell) {
+    async getTokenData(provider: ContractProvider) {
+        const result = await provider.get('get_token_data', []);
+        const tokenAddress = result.stack.readAddress();
+        const jettonWalletCode = result.stack.readCell();
+        return {
+            tokenAddress,
+            jettonWalletCode
+        };
+    }
+
+    async getItemAddress(provider: ContractProvider, userAddress: Address) {
         const result = await provider.get('get_item_address', [
-            {type: 'slice', cell: beginCell().storeAddress(userAddress).endCell()},
-            {type: 'slice', cell: beginCell().storeAddress(tokenAddress).endCell()},
-            {type: 'cell', cell: jettonWalletCode}
+            {type: 'slice', cell: beginCell().storeAddress(userAddress).endCell()}
         ]);
         return result.stack.readAddress();
     }
