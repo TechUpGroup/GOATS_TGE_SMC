@@ -26,9 +26,7 @@ export async function run(provider: NetworkProvider) {
     await vesting.sendCreateVesting(provider.sender(), {
         value: toNano('0.08'),
         totalVesting: toNano("12000000"),
-        ownerItem: owner,
-        tokenAddress: rewardTokenAddress,
-        jettonWalletCode
+        ownerItem: owner
     });
 
     // console.log('pool data', await pool.getPoolData());

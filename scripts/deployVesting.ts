@@ -1,4 +1,4 @@
-import { toNano, Address } from '@ton/core';
+import { toNano, Address, beginCell } from '@ton/core';
 import { Vesting } from '../wrappers/Vesting';
 import { JettonMinter } from '../wrappers/JettonMinter';
 import { compile, NetworkProvider } from '@ton/blueprint';
@@ -16,6 +16,7 @@ export async function run(provider: NetworkProvider) {
     );
     let jettonData = await jetton.getJettonData();
     let jettonWalletCode = jettonData.walletCode;
+    let tokenInfo = beginCell().storeAddress(rewardTokenAddress).storeRef(jettonWalletCode).endCell();
     // console.log(jettonData)
     const vesting = provider.open(
         Vesting.createFromConfig(
@@ -25,7 +26,8 @@ export async function run(provider: NetworkProvider) {
                 balance: 0n,
                 operatorAddress: owner,
                 ownerAddress: owner,
-                vestingItemCode: itemCode
+                vestingItemCode: itemCode,
+                tokenInfo
             },
             await compile('Vesting')
         )
