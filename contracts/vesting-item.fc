@@ -95,8 +95,6 @@ global cell storage::jetton_wallet_code;
             amount  = storage::total_vesting * current_period / 12;
         }
         int claimable = amount - storage::claimed_amount;
-        storage::claimed_amount = amount;
-        save_data();
         cell body = begin_cell()
                     .store_uint(op::internal_claim(), 32)
                     .store_uint(query_id, 64)
@@ -105,7 +103,16 @@ global cell storage::jetton_wallet_code;
                     .store_slice(storage::reward_token_address)
                     .store_ref(storage::jetton_wallet_code)
                     .end_cell();
-        send_simple_message(5 * const::provide_address_gas_consumption(), storage::vesting_address, body, NORMAL);
+        send_simple_message(6 * const::provide_address_gas_consumption(), storage::vesting_address, body, NORMAL);
+        return();
+    }
+
+    if (op == op::internal_claim()) {
+        throw_unless(error::INVALID_CALLER(), equal_slices_bits(sender_address, storage::vesting_address));
+        throw_unless(error::NOT_INITIALIZED(), (storage::total_vesting > 0));
+        int amount = in_msg_body~load_coins();
+        storage::claimed_amount += amount;
+        save_data();
         return();
     }
 

@@ -9,8 +9,8 @@ dotenv.config();
 export async function run(provider: NetworkProvider) {
     const address = Address.parse(process.env.VESTING ?? '');
     let rewardTokenAddress = Address.parse(process.env.TOKEN ?? '');
-    // let owner      = Address.parse(process.env.OWNER ?? '');
-    let owner      = Address.parse("0QD8O4NPwsvlLzmghGar_WFonuLOcX_OCY4U9Jm1hZuR2dU1");
+    let owner      = Address.parse(process.env.OWNER ?? '');
+    // let owner      = Address.parse("0QD8O4NPwsvlLzmghGar_WFonuLOcX_OCY4U9Jm1hZuR2dU1");
     // let itemCode = await compile('VestingItem')
     // let jettonWalletCode = await compile('JettonWallet');
     let jetton = provider.open(
@@ -25,7 +25,7 @@ export async function run(provider: NetworkProvider) {
 
     await vesting.sendCreateVesting(provider.sender(), {
         value: toNano('0.08'),
-        totalVesting: toNano("2000000"),
+        totalVesting: toNano("12000000"),
         ownerItem: owner,
         tokenAddress: rewardTokenAddress,
         jettonWalletCode
