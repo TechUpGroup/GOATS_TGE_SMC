@@ -92,7 +92,7 @@ global cell storage::jetton_wallet_code;
         );
         storage::total_vesting = total_vesting;
         save_data();
-        send_message_nobounce(const::provide_address_gas_consumption(), storage::vesting_address, internal_body, NORMAL);
+        send_message_nobounce(fwd_fee, storage::vesting_address, internal_body, NORMAL);
         return();
     }
 
@@ -107,17 +107,20 @@ global cell storage::jetton_wallet_code;
             amount  = storage::total_vesting * current_period / 12;
         }
         int claimable = amount - storage::claimed_amount;
-        storage::claimed_amount = amount;
-        save_data();
-        cell body = begin_cell()
-                    .store_uint(op::internal_claim(), 32)
-                    .store_uint(query_id, 64)
-                    .store_coins(claimable)
-                    .store_slice(storage::owner_address)
-                    .store_slice(storage::reward_token_address)
-                    .store_ref(storage::jetton_wallet_code)
-                    .end_cell();
-        send_simple_message(6 * const::provide_address_gas_consumption(), storage::vesting_address, body, NORMAL);
+        if (claimable > 0) {
+            storage::claimed_amount = amount;
+            save_data();
+            cell body = begin_cell()
+                        .store_uint(op::internal_claim(), 32)
+                        .store_uint(query_id, 64)
+                        .store_coins(claimable)
+                        .store_slice(storage::owner_address)
+                        .store_slice(storage::reward_token_address)
+                        .store_ref(storage::jetton_wallet_code)
+                        .end_cell();
+            send_simple_message(0, storage::vesting_address, body, CARRY_REMAINING_GAS);
+        }
+        
         return();
     }
 
