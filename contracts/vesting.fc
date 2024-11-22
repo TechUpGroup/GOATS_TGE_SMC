@@ -55,6 +55,7 @@ global cell storage::token_info;
 () transfer_jetton(
     int query_id,
     int jetton_amount,
+    int fwd_fee,
     slice to_address,
     slice token_address,
     cell jetton_wallet_code
@@ -77,10 +78,10 @@ global cell storage::token_info;
     var body = begin_cell()
                     .store_uint(0x18, 6) 
                     .store_slice(jetton_wallet_address)
-                    .store_coins(4 * const::provide_address_gas_consumption())
+                    .store_coins(0)
                     .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
                     .store_ref(internal_body);
-    send_raw_message(body.end_cell(), 1);
+    send_raw_message(body.end_cell(), 64);
 }
 
 ;; recv_internal is the main function of the contract and is called when it receives a message from other contracts
@@ -125,7 +126,7 @@ global cell storage::token_info;
     if (op == op::create_vesting()) {
         throw_unless(error::NOT_OWNER(), equal_slices_bits(sender_address, storage::owner_address));
         throw_unless(error::INVALID_MIN_TON(), (my_balance >= const::min_tons_for_storage()));  
-        throw_unless(error::INVALID_VALUE(), (msg_value >= 8 * const::provide_address_gas_consumption()));
+        throw_unless(error::INVALID_VALUE(), (msg_value >= 2 * fwd_fee + 5 * const::provide_address_gas_consumption()));
         (
             int total_vesting,
             slice owner_item
@@ -156,7 +157,7 @@ global cell storage::token_info;
                 .store_uint(query_id, 64)
                 .store_coins(total_vesting)
                 .store_ref(internal_body);
-        send_message_with_stateinit(7 * const::provide_address_gas_consumption(), item_address, item_state_init, body.end_cell(), NORMAL);
+        send_message_with_stateinit(2 * fwd_fee + 5 * const::provide_address_gas_consumption(), item_address, item_state_init, body.end_cell(), NORMAL);
         return();
     }
 
@@ -195,7 +196,7 @@ global cell storage::token_info;
 
     if (op == op::claim()) {
         throw_unless(error::INVALID_MIN_TON(), (my_balance >= const::min_tons_for_storage()));  
-        throw_unless(error::INVALID_VALUE(), (msg_value >= 8 * const::provide_address_gas_consumption()));
+        throw_unless(error::INVALID_VALUE(), (msg_value >= 6 * fwd_fee + 2 * const::provide_address_gas_consumption()));
         throw_unless(error::TOO_EARLY(), (storage::current_period > 0));
         (
             slice reward_token_address,
@@ -213,7 +214,7 @@ global cell storage::token_info;
                 .store_uint(op::claim(), 32)
                 .store_uint(query_id, 64)
                 .store_uint(storage::current_period, 8);
-        send_simple_message(7 * const::provide_address_gas_consumption(), item_address, body.end_cell(), NORMAL);
+        send_simple_message(0, item_address, body.end_cell(), CARRY_REMAINING_GAS);
         return();
     }
 
@@ -242,6 +243,7 @@ global cell storage::token_info;
         transfer_jetton(
             query_id,
             claimable,
+            fwd_fee,
             owner_item,
             reward_token_address,
             jetton_wallet_code
