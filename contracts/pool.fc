@@ -1,0 +1,298 @@
+#include "imports/stdlib.fc";
+#include "imports/errors.fc";
+#include "imports/op-codes.fc";
+#include "imports/constants.fc";
+#include "imports/params.fc";
+#include "imports/messages.fc";
+#include "imports/pool-utils.fc";
+#include "imports/events.fc";
+
+;; storage variables
+
+global int storage::balance;
+global int storage::operator_public_key;
+global slice storage::owner_address;
+global slice storage::jetton_token_address;
+global cell storage::jetton_wallet_code;
+global cell storage::nonce_code;
+
+;; load_data populates storage variables using stored data
+() load_data() impure {
+    var ds = get_data().begin_parse();
+
+    storage::balance = ds~load_coins();
+    storage::operator_public_key = ds~load_uint(256);
+    storage::owner_address = ds~load_msg_addr();
+    storage::jetton_token_address = ds~load_msg_addr();
+    storage::jetton_wallet_code = ds~load_ref();
+    storage::nonce_code = ds~load_ref();
+    
+    ds.end_parse();
+}
+
+;; save_data stores storage variables as a cell into persistent storage
+() save_data() impure {
+    set_data(
+        begin_cell()
+            .store_coins(storage::balance)
+            .store_uint(storage::operator_public_key, 256)
+            .store_slice(storage::owner_address)
+            .store_slice(storage::jetton_token_address)
+            .store_ref(storage::jetton_wallet_code)
+            .store_ref(storage::nonce_code)
+            .end_cell()
+    );
+}
+
+int check_withdraw(int nonce, int amount, slice receive_address, slice signature, int public_key) inline {
+    cell data_body = begin_cell()
+                    .store_uint(nonce, 64)
+                    .store_coins(amount)
+                    .store_slice(receive_address)
+                    .end_cell();
+    return check_signature(cell_hash(data_body), signature, public_key);
+}
+
+() transfer_jetton(
+    int query_id,
+    int jetton_amount,
+    slice to_address,
+    slice token_address,
+    cell jetton_wallet_code
+) impure inline {
+    slice jetton_wallet_address = calculate_user_jetton_wallet_address(
+        my_address(),
+        token_address,
+        jetton_wallet_code
+    );
+    cell internal_body = begin_cell()
+                        .store_uint(op::transfer(), 32)
+                        .store_uint(query_id, 64)
+                        .store_coins(jetton_amount)
+                        .store_slice(to_address)
+                        .store_slice(to_address)
+                        .store_int(0, 1)
+                        .store_coins(0)
+                        .store_int(0, 1)
+                        .end_cell();
+    var body = begin_cell()
+                    .store_uint(0x18, 6) 
+                    .store_slice(jetton_wallet_address)
+                    .store_coins(0)
+                    .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+                    .store_ref(internal_body);
+    send_raw_message(body.end_cell(), 64);
+}
+
+;; recv_internal is the main function of the contract and is called when it receives a message from other contracts
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) { ;; ignore all empty messages
+        return ();
+    }
+
+    slice cs = in_msg_full.begin_parse();
+    int flags = cs~load_uint(4);
+    if (flags & 1) { ;; ignore all bounced messages
+        return ();
+    }
+
+    load_data(); ;; here we populate the storage variables
+
+    slice sender_address = cs~load_msg_addr();
+    cs~load_msg_addr(); ;; skip dst
+    cs~load_coins(); ;; skip value
+    cs~skip_bits(1); ;; skip extracurrency collection
+    cs~load_coins(); ;; skip ihr_fee
+    int fwd_fee = cs~load_coins(); ;; we use message fwd_f
+
+    int op = in_msg_body~load_uint(32); ;; by convention, the first 32 bits of incoming message is the op
+    int query_id = in_msg_body~load_uint(64); ;; also by convention, the next 64 bits contain the "query id", although this is not always the case
+
+    ;; stake
+    if (op == op::transfer_notification()) {
+        int jetton_amount = in_msg_body~load_coins();
+        throw_unless(error::INVALID_AMOUNT(), jetton_amount > 0);
+        slice wallet_address = calculate_user_jetton_wallet_address(
+            my_address(),
+            storage::jetton_token_address,
+            storage::jetton_wallet_code
+        );
+        throw_unless(error::INVALID_CALLER(), equal_slices_bits(sender_address, wallet_address));
+        storage::balance += jetton_amount;
+        save_data();
+        return ();
+    }
+
+    if (op == op::withdraw()) {
+        throw_unless(error::INVALID_MIN_TON(), (my_balance >= const::min_tons_for_storage()));  
+        throw_unless(error::INVALID_VALUE(), (msg_value >= 2 * fwd_fee + 6 * const::provide_address_gas_consumption()));
+        (
+            int nonce,
+            int amount, 
+            slice signature
+        ) = (
+            in_msg_body~load_uint(64),
+            in_msg_body~load_coins(), 
+            in_msg_body~load_bits(512)
+        );
+        throw_unless(error::EXCEED_BALANCE(), (amount <= storage::balance));
+        throw_unless(error::INVALID_VALUE(), (amount > 0));
+        throw_unless(error::INVALID_SIGN(), check_withdraw(
+            nonce,
+            amount,
+            sender_address,
+            signature,
+            storage::operator_public_key
+        ));
+        cell nonce_state_init = calculate_nonce_state_init(
+            nonce,
+            my_address(),
+            storage::nonce_code
+        );
+        slice nonce_address = calculate_nonce_address(nonce_state_init);
+        cell internal_body = begin_cell()
+                            .store_uint(op::internal_withdraw(), 32)
+                            .store_uint(query_id, 64)
+                            .store_uint(nonce, 64)
+                            .store_coins(amount)
+                            .store_slice(sender_address)
+                            .end_cell();
+        var body = begin_cell()
+                    .store_uint(op::check_nonce(), 32)
+                    .store_uint(query_id, 64)
+                    .store_ref(internal_body);
+        send_message_with_stateinit(0, nonce_address, nonce_state_init, body.end_cell(), CARRY_REMAINING_GAS);
+        return ();
+    }
+
+    if (op == op::internal_withdraw()) {
+        (
+            int nonce,
+            int amount, 
+            slice user_address
+        ) = (
+            in_msg_body~load_uint(64),
+            in_msg_body~load_coins(), 
+            in_msg_body~load_msg_addr()
+        );
+        cell nonce_state_init = calculate_nonce_state_init(
+            nonce,
+            my_address(),
+            storage::nonce_code
+        );
+        slice nonce_address = calculate_nonce_address(nonce_state_init);
+        throw_unless(error::INVALID_CALLER(), equal_slices_bits(sender_address, nonce_address));
+        transfer_jetton(
+            query_id,
+            amount,
+            user_address,
+            storage::jetton_token_address,
+            storage::jetton_wallet_code
+        );
+        storage::balance -= amount;
+        save_data();   
+        emit_log_simple(
+            event::used_nonce(), 
+            begin_cell().store_uint(nonce, 64).end_cell(), 
+            1
+        );
+        emit_log_simple(
+            event::withdrawn(),
+            begin_cell()
+                .store_slice(user_address)
+                .store_coins(amount)
+                .store_uint(nonce, 64)
+                .end_cell(),
+            1
+        );
+        return();
+    }
+
+    if (op == op::change_owner()) {
+        throw_unless(error::NOT_OWNER(), equal_slices_bits(sender_address, storage::owner_address));
+        slice new_owner_address = in_msg_body~load_msg_addr();
+        force_chain(new_owner_address);
+        storage::owner_address = new_owner_address;
+        save_data();
+        return ();
+    }
+
+    if (op == op::change_jetton_token()) {
+        throw_unless(error::NOT_OWNER(), equal_slices_bits(sender_address, storage::owner_address));
+        slice new_jetton_address = in_msg_body~load_msg_addr();
+        force_chain(new_jetton_address);
+        storage::jetton_token_address = new_jetton_address;
+        save_data();
+        return ();
+    }
+
+    if (op == op::change_operator()) {
+        throw_unless(error::NOT_OWNER(), equal_slices_bits(sender_address, storage::owner_address));
+        int new_operator_public_key = in_msg_body~load_uint(256);
+        storage::operator_public_key = new_operator_public_key;
+        save_data();
+        return ();
+    }
+
+    if (op == op::change_jetton_wallet_code()) {
+        throw_unless(error::NOT_OWNER(), equal_slices_bits(sender_address, storage::owner_address));
+        cell new_wallet_code = in_msg_body~load_ref();
+        storage::jetton_wallet_code = new_wallet_code;
+        save_data();
+        return ();
+    }
+
+    if (op == op::owner_withdraw()) {
+        throw_unless(error::NOT_OWNER(), equal_slices_bits(sender_address, storage::owner_address));
+        int amount_ton = in_msg_body~load_coins();
+        throw_unless(error::INVALID_MIN_TON(), (my_balance >= (amount_ton + const::min_tons_for_storage())));  
+        var body = begin_cell()
+                    .store_uint(op::excesses(), 32)
+                    .store_uint(query_id, 64);
+        send_message_nobounce(amount_ton, sender_address, body.end_cell(), NORMAL);
+        return ();
+    }
+
+    throw(0xffff); ;; if the message contains an op that is not known to this contract, we throw
+}
+
+;; get methods are a means to conveniently read contract data using, for example, HTTP APIs
+;; they are marked with method_id
+;; note that unlike in many other smart contract VMs, get methods cannot be called by other contracts
+
+(int, int, slice, slice, cell, cell) get_pool_jetton_data() method_id {
+    load_data();
+    return (
+        storage::balance,
+        storage::operator_public_key, 
+        storage::owner_address, 
+        storage::jetton_token_address,
+        storage::jetton_wallet_code,
+        storage::nonce_code
+    );
+}
+
+slice get_nonce_address(int nonce) method_id {
+    load_data();
+    return calculate_user_nonce_address(
+        nonce,
+        my_address(),
+        storage::nonce_code
+    );
+}
+
+int get_verify_withdraw_result(
+    int nonce, 
+    int amount, 
+    slice receive_address, 
+    slice signature
+) method_id {
+    load_data();
+    return check_withdraw(
+        nonce,
+        amount,
+        receive_address,
+        signature,
+        storage::operator_public_key
+    );
+}

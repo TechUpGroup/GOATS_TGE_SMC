@@ -19,5 +19,10 @@ int op::change_owner() asm "0xf1eef33c PUSHINT";
 int op::change_operator() asm "0x9a89624c PUSHINT";
 int op::owner_withdraw() asm "0xce9dd194 PUSHINT";
 int op::owner_withdraw_jetton() asm "0x3267b960 PUSHINT";
+int op::internal_withdraw() asm "0x3bda2d82 PUSHINT";
+int op::check_nonce() asm "0xabcb7363 PUSHINT";
+int op::withdraw() asm "0xcb03bfaf PUSHINT";
+int op::change_jetton_token() asm "0x7563c1dc PUSHINT";
+int op::change_jetton_wallet_code() asm "0xf941c229 PUSHINT";
 
 

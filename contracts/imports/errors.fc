@@ -9,3 +9,5 @@ int error::TOO_EARLY() asm "108 PUSHINT";
 int error::NOT_INITIALIZED() asm "109 PUSHINT";
 int error::EXCEED_BALANCE() asm "110 PUSHINT";
 int error::INVALID_AMOUNT() asm "111 PUSHINT";
+int error::INVALID_SIGN() asm "112 PUSHINT";
+int error::NONCE_USED() asm "113 PUSHINT";

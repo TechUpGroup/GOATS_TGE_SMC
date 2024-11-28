@@ -1,3 +1,5 @@
 int event::increased_period() asm "0xea9deba5 PUSHINT";
 int event::created_vesting() asm "0xa69eb65e PUSHINT";
 int event::claimed() asm "0x1479a01a PUSHINT";
+int event::used_nonce() asm "0x0d58c2cb PUSHINT";
+int event::withdrawn() asm "0x6c354eb2 PUSHINT";
