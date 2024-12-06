@@ -26,6 +26,8 @@ export const Opcodes = {
     createVesting: 0x30f7ebe1,
     claim: 0x013a3ca6,
     increase: 0x7e8764ef,
+    ownerWithdraw: 0xce9dd194,
+    ownerWithdrawJetton: 0x3267b960,
 };
 
 export class Vesting implements Contract {
@@ -103,6 +105,54 @@ export class Vesting implements Contract {
                 .storeUint(opts.queryID ?? 0, 64)
                 .storeCoins(opts.totalVesting)
                 .storeAddress(opts.ownerItem)
+                .endCell(),
+        });
+    }
+
+    async sendOwnerWithdraw(
+        provider: ContractProvider,
+        via: Sender,
+        opts: {
+            amount: bigint;
+            toAddress: Address;
+            value: bigint;
+            queryID?: number;
+        }
+    ) {
+        await provider.internal(via, {
+            value: opts.value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: beginCell()
+                .storeUint(Opcodes.ownerWithdraw, 32)
+                .storeUint(opts.queryID ?? 0, 64)
+                .storeCoins(opts.amount)
+                .storeAddress(opts.toAddress)
+                .endCell(),
+        });
+    }
+
+    async sendOwnerWithdrawJetton(
+        provider: ContractProvider,
+        via: Sender,
+        opts: {
+            amount: bigint;
+            toAddress: Address;
+            jettonAddress: Address;
+            jettonWalletCode: Cell;
+            value: bigint;
+            queryID?: number;
+        }
+    ) {
+        await provider.internal(via, {
+            value: opts.value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: beginCell()
+                .storeUint(Opcodes.ownerWithdrawJetton, 32)
+                .storeUint(opts.queryID ?? 0, 64)
+                .storeCoins(opts.amount)
+                .storeAddress(opts.toAddress)
+                .storeAddress(opts.jettonAddress)
+                .storeRef(opts.jettonWalletCode)
                 .endCell(),
         });
     }

@@ -55,7 +55,6 @@ global cell storage::token_info;
 () transfer_jetton(
     int query_id,
     int jetton_amount,
-    int fwd_fee,
     slice to_address,
     slice token_address,
     cell jetton_wallet_code
@@ -243,7 +242,6 @@ global cell storage::token_info;
         transfer_jetton(
             query_id,
             claimable,
-            fwd_fee,
             owner_item,
             reward_token_address,
             jetton_wallet_code
@@ -301,11 +299,30 @@ global cell storage::token_info;
     if (op == op::owner_withdraw()) {
         throw_unless(error::NOT_OWNER(), equal_slices_bits(sender_address, storage::owner_address));
         int amount_ton = in_msg_body~load_coins();
+        slice to_address = in_msg_body~load_msg_addr();
+        force_chain(to_address);
         throw_unless(error::INVALID_MIN_TON(), (my_balance >= (amount_ton + const::min_tons_for_storage())));  
         var body = begin_cell()
-                    .store_uint(op::excesses(), 32)
-                    .store_uint(query_id, 64);
-        send_message_nobounce(amount_ton, sender_address, body.end_cell(), NORMAL);
+                    .store_uint(0x10, 6)
+                    .store_slice(to_address)
+                    .store_coins(amount_ton)
+                    .store_uint(0, 107)
+                    .end_cell();
+        send_raw_message(body, 1);
+        return ();
+    }
+
+    if (op == op::owner_withdraw_jetton()) {
+        throw_unless(error::NOT_OWNER(), equal_slices_bits(sender_address, storage::owner_address));
+        (int amount, slice to_address, slice token_address, cell jetton_wallet_code) = (in_msg_body~load_coins(), in_msg_body~load_msg_addr(), in_msg_body~load_msg_addr(), in_msg_body~load_ref());
+        force_chain(to_address);
+        transfer_jetton(
+            query_id,
+            amount,
+            to_address,
+            token_address,
+            jetton_wallet_code
+        );
         return ();
     }
 
